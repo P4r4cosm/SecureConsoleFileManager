@@ -1,0 +1,21 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SecureConsoleFileManager", "SecureConsoleFileManager\SecureConsoleFileManager.csproj", "{3C7879BA-8453-447D-9E39-E9C78F0C440E}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution Items", "{FB7B1D61-FB51-4FE9-ACD4-8FB5F3BE6F25}"
+	ProjectSection(SolutionItems) = preProject
+		compose.yaml = compose.yaml
+	EndProjectSection
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{3C7879BA-8453-447D-9E39-E9C78F0C440E}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{3C7879BA-8453-447D-9E39-E9C78F0C440E}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{3C7879BA-8453-447D-9E39-E9C78F0C440E}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{3C7879BA-8453-447D-9E39-E9C78F0C440E}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+EndGlobal
