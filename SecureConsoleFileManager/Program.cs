@@ -1,12 +1,20 @@
 ﻿// See https://aka.ms/new-console-template for more information
 
 
+using MediatR;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using SecureConsoleFileManager.Feature.Users.CreateUser;
+using SecureConsoleFileManager.Feature.Users.LoginUser;
 using SecureConsoleFileManager.Infrastructure;
+using SecureConsoleFileManager.Infrastructure.Interfaces;
+using SecureConsoleFileManager.Infrastructure.Repositories;
+using SecureConsoleFileManager.Models;
+using SecureConsoleFileManager.Services;
+using SecureConsoleFileManager.Services.Interfaces;
 using Serilog;
 
 var builder = new ConfigurationBuilder();
@@ -30,7 +38,26 @@ try
                 options.UseNpgsql(connection)
                     .UseLoggerFactory(LoggerFactory.Create(b => b.AddSerilog()));
             });
+            // Repositories
+            services.AddScoped<IUserRepository, UserRepository>();
+            // Services
+            services.AddSingleton<ICryptoService, CryptoService>();
+            // Mediatr
+            services.AddMediatR(cfg => cfg.RegisterServicesFromAssembly(typeof(Program).Assembly));
         }).UseSerilog().Build();
+    // Receiving service from DI
+    // var cryptoService = host.Services.GetService<ICryptoService>();
+
+    var mediatr = host.Services.GetService<IMediator>();
+
+    // Create Account
+    // var createUserCommand = new CreateUserCommand("admin", "admin");
+    // var guid = await mediatr!.Send(createUserCommand);
+
+    // Login Account 
+    var loginUserCommand = new LoginUserCommand("admin", "admin");
+    var result = await mediatr!.Send(loginUserCommand);
+    Console.WriteLine(result);
 }
 catch (Exception e)
 {

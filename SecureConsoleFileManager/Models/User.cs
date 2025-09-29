@@ -9,6 +9,6 @@ public class User
     [MaxLength (30)]
     public required string Login  { get; set; }
     
-    // TODO : Добавить хэширование
+    [MaxLength (200)]
     public required string Password { get; set; }
 }
