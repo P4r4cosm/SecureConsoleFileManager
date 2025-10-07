@@ -1,4 +1,4 @@
-﻿// See https://aka.ms/new-console-template for more information
+﻿
 
 
 using MediatR;
@@ -7,12 +7,13 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
-using SecureConsoleFileManager.Feature.Users.CreateUser;
+using Microsoft.Extensions.Options;
+using SecureConsoleFileManager.Common.Options;
+using SecureConsoleFileManager.Feature.Disks.GetDisksInfo;
 using SecureConsoleFileManager.Feature.Users.LoginUser;
 using SecureConsoleFileManager.Infrastructure;
 using SecureConsoleFileManager.Infrastructure.Interfaces;
 using SecureConsoleFileManager.Infrastructure.Repositories;
-using SecureConsoleFileManager.Models;
 using SecureConsoleFileManager.Services;
 using SecureConsoleFileManager.Services.Interfaces;
 using Serilog;
@@ -21,17 +22,25 @@ var builder = new ConfigurationBuilder();
 
 BuildConfiguration(builder);
 
-IConfiguration conifg = builder.Build();
+IConfiguration config = builder.Build();
 
-Log.Logger = new LoggerConfiguration().ReadFrom.Configuration(conifg).CreateLogger();
+Log.Logger = new LoggerConfiguration().ReadFrom.Configuration(config).CreateLogger();
 
 
 try
 {
-    Log.Information("Запуск приложения ...");
+    Log.Information("Application starting up ...");
+    
+    Log.Information("Initialize file manager directory... ");
+    
     var host = Host.CreateDefaultBuilder(args)
         .ConfigureServices((context, services) =>
         {
+            
+            services.AddOptions();
+            
+            services.Configure<FileSystemOptions>(config.GetSection(FileSystemOptions.FileSystemConfig));
+            
             var connection = context.Configuration.GetConnectionString("DefaultConnection");
             services.AddDbContext<ApplicationDbContext>(options =>
             {
@@ -42,12 +51,20 @@ try
             services.AddScoped<IUserRepository, UserRepository>();
             // Services
             services.AddSingleton<ICryptoService, CryptoService>();
+            services.AddSingleton<IFileManagerService, FileManagerService>();
+            
             // Mediatr
             services.AddMediatR(cfg => cfg.RegisterServicesFromAssembly(typeof(Program).Assembly));
         }).UseSerilog().Build();
+    
     // Receiving service from DI
     // var cryptoService = host.Services.GetService<ICryptoService>();
 
+    var fileManagerService = host.Services.GetService<IFileManagerService>();
+    var options = host.Services.GetService<IOptions<FileSystemOptions>>().Value;
+    
+    fileManagerService.CreateDirectory("zalupa konya", options.FullStartPath);
+    
     var mediatr = host.Services.GetService<IMediator>();
 
     // Create Account
@@ -55,9 +72,13 @@ try
     // var guid = await mediatr!.Send(createUserCommand);
 
     // Login Account 
+
     var loginUserCommand = new LoginUserCommand("admin", "admin");
     var result = await mediatr!.Send(loginUserCommand);
-    Console.WriteLine(result);
+
+    // GetDisksInfo
+    var getDiskInfocommand = new GetDisksInfoCommand();
+    var result2 = await mediatr!.Send(getDiskInfocommand);
 }
 catch (Exception e)
 {
