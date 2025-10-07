@@ -10,7 +10,7 @@
       
   postgres:
     image: postgres
-    container_name: postgres-db
+    container_name: postgres-db_file_manager
     environment:
       - POSTGRES_DB=account_db
       - POSTGRES_USER=user
@@ -28,9 +28,44 @@
       retries: 5
     restart: always
     
+    
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:9.1.3
+    container_name: elasticsearch_file_manager
+    environment:
+      - node.name=elasticsearch
+      - discovery.type=single-node
+      - xpack.security.enrollment.enabled=false
+      - xpack.security.enabled=false
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m
+    ports:
+      - "9200:9200"
+      - "9300:9300"
+    volumes:
+      - elastic_data:/usr/share/elasticsearch/data
+    networks:
+      - elastic-net
+    
+  kibana:
+    image: docker.elastic.co/kibana/kibana:9.1.3
+    container_name: kibana_file_manager
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+    ports:
+      - "5601:5601"
+    depends_on:
+      - elasticsearch
+    networks:
+      - elastic-net
+  
+    
 volumes:
   postgres-data:
+  elastic_data:
+    driver: local
         
 networks:
   app-network:
+    driver: bridge
+  elastic-net:
     driver: bridge
