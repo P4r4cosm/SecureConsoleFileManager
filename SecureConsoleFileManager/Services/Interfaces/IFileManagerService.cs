@@ -1,8 +1,18 @@
+using SecureConsoleFileManager.Models;
+
 namespace SecureConsoleFileManager.Services.Interfaces;
 
 public interface IFileManagerService
-{ 
-    public bool IsPathSave(string relativePath);
+{
+
+    public MbResult CreateDirectory(string directoryName, string currentDirectoryPath);
     
-    public bool CreateDirectory(string directoryName, string CurrentDirectoryPath);
+    
+    public MbResult DeleteDirectory(string directoryName, string currentDirectoryPath);
+    
+    public MbResult DeleteDirectory(string fullDirectoryPath);
+    
+    public MbResult ChangeDirectoryName(string newDirectoryName, string fullDirectoryPath);
+    
+    public MbResult ChangeDirectoryName(string newDirectoryName, string directoryName, string currentDirectoryPath);
 }

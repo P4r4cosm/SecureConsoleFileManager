@@ -11,5 +11,4 @@ public class Operation
     public Guid UserId { get; set; }
     
     public Guid FileId { get; set; }
-    
 }
