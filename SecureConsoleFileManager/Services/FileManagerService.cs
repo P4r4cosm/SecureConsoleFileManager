@@ -18,7 +18,7 @@ public class FileManagerService(IOptions<FileSystemOptions> fileSystemOptions, I
 
 
     // Он либо вернет ошибку, либо безопасный полный путь
-    private MbResult<string> ValidateAndGetFullPath(string relativePath)
+    public MbResult<string> ValidateAndGetFullPath(string relativePath)
     {
         if (string.IsNullOrWhiteSpace(relativePath))
         {
