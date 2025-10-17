@@ -3,21 +3,38 @@ using Microsoft.Extensions.Options;
 using SecureConsoleFileManager.Common.Options;
 using SecureConsoleFileManager.Models;
 using SecureConsoleFileManager.Services.Interfaces;
+using System.IO;
+using System.Threading.Tasks;
 using File = System.IO.File;
 
 namespace SecureConsoleFileManager.Services;
 
-// ПОД CurrentDirectoryPath имеется ввиду относительный путь пользователя
-public class FileManagerService(IOptions<FileSystemOptions> fileSystemOptions, ILogger<FileManagerService> logger)
+public interface IFileManagerService
+{
+    public MbResult CreateDirectory(string relativePath);
+    public MbResult<string> ValidateAndGetFullPath(string relativePath);
+
+    public MbResult DeleteDirectory(string relativePath, bool recursive);
+
+    public MbResult Move(string sourceRelativePath, string destinationRelativePath);
+
+    public MbResult<DirectoryInfo> GetDirectoryInfo(string currentDirectoryPath);
+    public Task<MbResult<string>> ReadFileAsync(string relativePath);
+
+    public MbResult CreateFile(string relativePath);
+    public MbResult DeleteFile(string relativePath);
+    public Task<MbResult> AppendToFileAsync(string relativePath, string contentToAppend);
+}
+
+public class FileManagerService(
+    IOptions<FileSystemOptions> fileSystemOptions,
+    ILogger<FileManagerService> logger,
+    ILockerService lockerService)
     : IFileManagerService
 {
     private readonly FileSystemOptions _fileSystemOptions = fileSystemOptions.Value;
 
-
-    // ================ Директории ==================
-
-
-    // Он либо вернет ошибку, либо безопасный полный путь
+    // Этот метод остается публичным, так как он полезен и для других сервисов (например, ArchiveService)
     public MbResult<string> ValidateAndGetFullPath(string relativePath)
     {
         if (string.IsNullOrWhiteSpace(relativePath))
@@ -25,17 +42,16 @@ public class FileManagerService(IOptions<FileSystemOptions> fileSystemOptions, I
             return MbResult<string>.Failure("Путь не может быть пустым.");
         }
 
-        // Проверяем на недопустимые символы в самом начале
         if (relativePath.IndexOfAny(Path.GetInvalidPathChars()) >= 0)
         {
             return MbResult<string>.Failure("Путь содержит недопустимые символы.");
         }
 
         var rootPath = _fileSystemOptions.FullStartPath;
+        // Path.Combine корректно обработает, если relativePath - это уже корень.
         var combinedPath = Path.Combine(rootPath, relativePath);
         var fullPath = Path.GetFullPath(combinedPath);
 
-        // Основная проверка безопасности
         if (!fullPath.StartsWith(rootPath, StringComparison.OrdinalIgnoreCase))
         {
             logger.LogWarning("Обнаружена попытка обхода каталога: '{relativePath}'", relativePath);
@@ -45,237 +61,185 @@ public class FileManagerService(IOptions<FileSystemOptions> fileSystemOptions, I
         return MbResult<string>.Success(fullPath);
     }
 
-    public MbResult CreateDirectory(string directoryName, string currentDirectoryPath)
-    {
-        var relativePath = Path.Combine(_fileSystemOptions.GetUserPath(currentDirectoryPath), directoryName);
-        var validationResult = ValidateAndGetFullPath(relativePath);
+    // ================ Операции с Директориями ==================
 
-        if (!validationResult.IsSuccess)
-        {
-            return MbResult.Failure(validationResult.Error!);
-        }
+    public MbResult CreateDirectory(string relativePath)
+    {
+        var validationResult = ValidateAndGetFullPath(relativePath);
+        if (!validationResult.IsSuccess) return MbResult.Failure(validationResult.Error!);
 
         var fullPath = validationResult.Result;
 
-        try
+        return lockerService.ExecuteLocked(fullPath, () =>
         {
             if (Directory.Exists(fullPath))
             {
-                return MbResult.Failure($"Директория '{directoryName}' уже существует.");
+                return MbResult.Failure($"Директория '{relativePath}' уже существует.");
+            }
+
+            if (File.Exists(fullPath))
+            {
+                return MbResult.Failure($"Объект с именем '{relativePath}' уже существует как файл.");
             }
 
             Directory.CreateDirectory(fullPath);
-            logger.LogInformation("Директория создана: {userPath}", relativePath);
+            logger.LogInformation("Директория создана: {path}", relativePath);
             return MbResult.Success();
-        }
-        catch (Exception e)
-        {
-            logger.LogError(e, "Ошибка при создании директории: {fullPath}", fullPath);
-            return MbResult.Failure($"Внутренняя ошибка при создании директории: {e.Message}");
-        }
+        });
     }
 
-    public MbResult DeleteDirectory(string currentDirectoryPath)
+    public MbResult DeleteDirectory(string relativePath, bool recursive = true)
     {
-        var validationResult = ValidateAndGetFullPath(currentDirectoryPath);
-
-        if (!validationResult.IsSuccess)
-        {
-            return MbResult.Failure(validationResult.Error!);
-        }
-
-        var validatedFullPath = validationResult.Result;
-
-        try
-        {
-            if (!Directory.Exists(validatedFullPath))
-            {
-                return MbResult.Failure($"Директория не найдена: {currentDirectoryPath}");
-            }
-
-            // Выполняем рекурсивное удаление
-            Directory.Delete(validatedFullPath, true);
-            logger.LogInformation("Директория удалена: {path}", validatedFullPath);
-            return MbResult.Success();
-        }
-        catch (Exception e)
-        {
-            logger.LogError(e, "Ошибка при удалении директории: {path}", validatedFullPath);
-            return MbResult.Failure($"Ошибка при удалении: {e.Message}");
-        }
-    }
-
-    public MbResult ChangeDirectoryName(string newDirectoryName, string currentDirectoryPath)
-    {
-        // 1. Валидируем исходный путь
-        var validationResult = ValidateAndGetFullPath(currentDirectoryPath);
-        if (!validationResult.IsSuccess)
-        {
-            return MbResult.Failure(validationResult.Error!);
-        }
-
-        var validatedFullPath = validationResult.Result;
-
-        // 2. Проверяем, что новое имя - это просто имя, а не попытка атаки
-        if (newDirectoryName.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
-        {
-            return MbResult.Failure("Новое имя директории содержит недопустимые символы.");
-        }
-
-        try
-        {
-            if (!Directory.Exists(validatedFullPath))
-            {
-                return MbResult.Failure($"Исходная директория не найдена: {currentDirectoryPath}");
-            }
-
-            var directoryInfo = new DirectoryInfo(validatedFullPath);
-            // Строим полный путь назначения
-            var destinationPath = Path.Combine(directoryInfo.Parent!.FullName, newDirectoryName);
-
-            if (Directory.Exists(destinationPath))
-            {
-                return MbResult.Failure($"Директория с именем '{newDirectoryName}' уже существует.");
-            }
-
-            // Используем правильные пути
-            Directory.Move(validatedFullPath, destinationPath);
-            logger.LogInformation("Директория {source} переименована в {dest}", validatedFullPath, destinationPath);
-            return MbResult.Success();
-        }
-        catch (Exception e)
-        {
-            logger.LogError(e, "Ошибка при переименовании директории {path}", validatedFullPath);
-            return MbResult.Failure($"Ошибка при переименовании: {e.Message}");
-        }
-    }
-
-    public MbResult<DirectoryInfo> GetDirectoryInfo(string currentDirectoryPath)
-    {
-        var validationResult = ValidateAndGetFullPath(currentDirectoryPath);
-        if (!validationResult.IsSuccess)
-
-            return MbResult<DirectoryInfo>.Failure(validationResult.Error!);
-        var  validatedFullPath = validationResult.Result;
-        if (Directory.Exists(validatedFullPath))
-            return MbResult<DirectoryInfo>.Success(new DirectoryInfo(validatedFullPath));
-        return MbResult<DirectoryInfo>.Failure("Директория не найдена");
-    }
-
-    // Перегруженные методы теперь просто вызывают основные
-    public MbResult DeleteDirectory(string directoryName, string currentDirectoryPath)
-    {
-        var path = Path.Combine(currentDirectoryPath, directoryName);
-        return DeleteDirectory(path);
-    }
-
-    public MbResult ChangeDirectoryName(string newDirectoryName, string directoryName, string currentDirectoryPath)
-    {
-        var path = Path.Combine(currentDirectoryPath, directoryName);
-        return ChangeDirectoryName(newDirectoryName, path);
-    }
-
-    // ================ Файлы ==================
-
-
-    // TODO: 1. Обо всех операциях с файлами нужно делать уведомления
-    // TODO: 2? Вынести операции с файлами в отдельный сервис, а этот переименовать под директории
-    public MbResult CreateFile(string fileName, string currentDirectoryPath)
-    {
-        var relativeFilePath = Path.Combine(currentDirectoryPath, fileName);
-        var validationResult = ValidateAndGetFullPath(relativeFilePath);
-
+        var validationResult = ValidateAndGetFullPath(relativePath);
         if (!validationResult.IsSuccess) return MbResult.Failure(validationResult.Error!);
 
         var fullPath = validationResult.Result;
 
-        try
+        return lockerService.ExecuteLocked(fullPath, () =>
+        {
+            if (!Directory.Exists(fullPath))
+            {
+                return MbResult.Failure($"Директория не найдена: {relativePath}");
+            }
+
+            Directory.Delete(fullPath, recursive);
+            logger.LogInformation("Директория удалена: {path}", relativePath);
+            return MbResult.Success();
+        });
+    }
+
+    public MbResult<DirectoryInfo> GetDirectoryInfo(string relativePath)
+    {
+        var validationResult = ValidateAndGetFullPath(relativePath);
+        if (!validationResult.IsSuccess)
+            return MbResult<DirectoryInfo>.Failure(validationResult.Error!);
+
+        var validatedFullPath = validationResult.Result;
+        if (Directory.Exists(validatedFullPath))
+            return MbResult<DirectoryInfo>.Success(new DirectoryInfo(validatedFullPath));
+
+        return MbResult<DirectoryInfo>.Failure($"Директория не найдена: {relativePath}");
+    }
+
+    // ================ Операции с Файлами ==================
+
+    public MbResult CreateFile(string relativePath)
+    {
+        var validationResult = ValidateAndGetFullPath(relativePath);
+        if (!validationResult.IsSuccess) return MbResult.Failure(validationResult.Error!);
+
+        var fullPath = validationResult.Result;
+
+        return lockerService.ExecuteLocked(fullPath, () =>
         {
             if (File.Exists(fullPath))
             {
-                return MbResult.Failure($"Файл '{fileName}' уже существует.");
+                return MbResult.Failure($"Файл '{relativePath}' уже существует.");
             }
 
+            if (Directory.Exists(fullPath))
+            {
+                return MbResult.Failure($"Объект с именем '{relativePath}' уже существует как директория.");
+            }
+
+            // Создаем директорию, если ее нет
+            Directory.CreateDirectory(Path.GetDirectoryName(fullPath));
             File.WriteAllText(fullPath, string.Empty);
-            logger.LogInformation("Файл создан: {path}", relativeFilePath);
-
-
+            logger.LogInformation("Файл создан: {path}", relativePath);
             return MbResult.Success();
-        }
-        catch (Exception exception)
-        {
-            logger.LogError(exception, "Ошибка при создании файла: {path}", fullPath);
-            return MbResult.Failure($"Внутренняя ошибка при создании файла: {exception.Message}");
-        }
+        });
     }
 
-    public MbResult DeleteFile(string fullFilePath)
+    public MbResult DeleteFile(string relativePath)
     {
-        var relativePath = _fileSystemOptions.GetUserPath(fullFilePath);
         var validationResult = ValidateAndGetFullPath(relativePath);
         if (!validationResult.IsSuccess) return MbResult.Failure(validationResult.Error!);
 
         var fullPath = validationResult.Result;
-        try
+
+        return lockerService.ExecuteLocked(fullPath, () =>
         {
             if (!File.Exists(fullPath))
                 return MbResult.Failure($"Файл не найден: {relativePath}");
+
             File.Delete(fullPath);
             logger.LogInformation("Файл удален: {path}", relativePath);
             return MbResult.Success();
-        }
-        catch (Exception exception)
-        {
-            logger.LogError(exception, "Ошибка при удалении файла: {path}", fullPath);
-            return MbResult.Failure($"Ошибка при удалении файла: {exception.Message}");
-        }
+        });
     }
 
-    public async Task<MbResult> AppendToFileAsync(string fullFilePath, string contentToAppend)
+    public Task<MbResult> AppendToFileAsync(string relativePath, string contentToAppend)
     {
-        var relativePath = _fileSystemOptions.GetUserPath(fullFilePath);
         var validationResult = ValidateAndGetFullPath(relativePath);
-        if (!validationResult.IsSuccess) return MbResult.Failure(validationResult.Error!);
+        if (!validationResult.IsSuccess) return Task.FromResult(MbResult.Failure(validationResult.Error!));
 
         var fullPath = validationResult.Result;
-        try
+
+        return lockerService.ExecuteLockedAsync(fullPath, async () =>
         {
             if (!File.Exists(fullPath))
                 return MbResult.Failure($"Файл не найден: {relativePath}");
 
             await File.AppendAllTextAsync(fullPath, contentToAppend);
             logger.LogInformation("Данные дописаны в файл: {path}", relativePath);
-
             return MbResult.Success();
-        }
-        catch (Exception e)
-        {
-            logger.LogError(e, "Ошибка при дописывании в файл: {path}", fullPath);
-            return MbResult.Failure($"Ошибка при записи в файл: {e.Message}");
-        }
+        });
     }
 
-    public async Task<MbResult<string>> ReadFileAsync(string fullFilePath)
+    public async Task<MbResult<string>> ReadFileAsync(string relativePath)
     {
-        var validationResult = ValidateAndGetFullPath(fullFilePath);
-        if (!validationResult.IsSuccess) return validationResult;
-        
+        var validationResult = ValidateAndGetFullPath(relativePath);
+        if (!validationResult.IsSuccess) return MbResult<string>.Failure(validationResult.Error!);
+
         var fullPath = validationResult.Result;
         try
         {
             if (!File.Exists(fullPath))
             {
-                return MbResult<string>.Failure($"Файл не найден: {fullFilePath}");
+                return MbResult<string>.Failure($"Файл не найден: {relativePath}");
             }
-            
+
             string text = await File.ReadAllTextAsync(fullPath);
-            logger.LogInformation("Файл прочитан: {path}", fullFilePath);
+            logger.LogInformation("Файл прочитан: {path}", relativePath);
             return MbResult<string>.Success(text);
         }
-        catch(Exception e)
+        catch (Exception e)
         {
             logger.LogError(e, "Ошибка при чтении файла: {path}", fullPath);
             return MbResult<string>.Failure($"Ошибка при чтении файла: {e.Message}");
         }
+    }
+
+    // ================ Общие операции ==================
+
+    public MbResult Move(string sourceRelativePath, string destinationRelativePath)
+    {
+        var sourceValidation = ValidateAndGetFullPath(sourceRelativePath);
+        if (!sourceValidation.IsSuccess) return MbResult.Failure($"Неверный исходный путь: {sourceValidation.Error}");
+        var fullSourcePath = sourceValidation.Result;
+
+        var destValidation = ValidateAndGetFullPath(destinationRelativePath);
+        if (!destValidation.IsSuccess) return MbResult.Failure($"Неверный целевой путь: {destValidation.Error}");
+        var fullDestPath = destValidation.Result;
+
+        return lockerService.ExecuteLocked(fullSourcePath, fullDestPath, () =>
+        {
+            if (!File.Exists(fullSourcePath) && !Directory.Exists(fullSourcePath))
+            {
+                return MbResult.Failure($"Исходный путь не найден: {sourceRelativePath}");
+            }
+
+            if (File.Exists(fullDestPath) || Directory.Exists(fullDestPath))
+            {
+                return MbResult.Failure($"Целевой путь уже занят: {destinationRelativePath}");
+            }
+
+            // Создаем директорию, если ее нет
+            Directory.CreateDirectory(Path.GetDirectoryName(fullDestPath));
+
+            Directory.Move(fullSourcePath, fullDestPath);
+            logger.LogInformation("Ресурс перемещен из {source} в {dest}", sourceRelativePath, destinationRelativePath);
+            return MbResult.Success();
+        });
     }
 }

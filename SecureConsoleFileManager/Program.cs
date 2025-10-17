@@ -50,6 +50,8 @@ try
             // Repositories
             services.AddScoped<IUserRepository, UserRepository>();
             // Services
+            services.AddSingleton<ILockerService, LockerService>();
+            services.AddSingleton<IArchiveService, ArchiveService>();
             services.AddSingleton<ICryptoService, CryptoService>();
             services.AddSingleton<IFileManagerService, FileManagerService>();
             
@@ -59,11 +61,7 @@ try
     
     // Receiving service from DI
     // var cryptoService = host.Services.GetService<ICryptoService>();
-
-    var fileManagerService = host.Services.GetService<IFileManagerService>();
-    var options = host.Services.GetService<IOptions<FileSystemOptions>>().Value;
     
-    fileManagerService.CreateDirectory("zalupa konya", options.FullStartPath);
     
     var mediatr = host.Services.GetService<IMediator>();
 

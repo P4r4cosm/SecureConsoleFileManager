@@ -11,6 +11,7 @@ namespace SecureConsoleFileManager.Services;
 public class ArchiveService(
     IOptions<FileSystemOptions> fileSystemOptions,
     ILogger<ArchiveService> logger,
+    ILockerService lockerService,
     IFileManagerService fileManagerService) : IArchiveService
 {
     // Максимальный размер одного распакованного файла (например, 100 МБ)
@@ -124,34 +125,45 @@ public class ArchiveService(
             "Проверка перед архивацией пройдена. Файлов: {fileCount}, общий размер: {totalSize} байт.", fileCount,
             totalSize);
 
-        try
+        return lockerService.ExecuteLocked(fullZipPath, () =>
         {
-            using (var fileStream = new FileStream(fullZipPath, FileMode.Create, FileAccess.Write)){
-            using (var archive = new ZipArchive(fileStream, ZipArchiveMode.Create))
+            try
             {
-                var basePath = fileSystemOptions.Value.FullStartPath;
-                foreach (var path in processedPaths)
+                using (var fileStream = new FileStream(fullZipPath, FileMode.Create, FileAccess.Write))
+                using (var archive = new ZipArchive(fileStream, ZipArchiveMode.Create))
                 {
-                    string entryName = Path.GetRelativePath(basePath, path);
-                    
-                    var entry = archive.CreateEntry(entryName, CompressionLevel.Optimal);
-                    using (var entryStream = entry.Open())
-                    using (var sourceStream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read))
+                    var basePath = fileSystemOptions.Value.FullStartPath;
+                    foreach (var path in processedPaths.Where(p => File.Exists(p)))
                     {
-                        sourceStream.CopyTo(entryStream);
+                        // Дополнительная проверка на симлинк для защиты от TOCTOU
+                        if (File.ResolveLinkTarget(path, true) is not null)
+                        {
+                            logger.LogWarning("Пропуск символической ссылки во время архивации: {path}", path);
+                            continue;
+                        }
+
+                        string entryName = Path.GetRelativePath(basePath, path);
+                        var entry = archive.CreateEntry(entryName, CompressionLevel.Optimal);
+                        using (var entryStream = entry.Open())
+                        using (var sourceStream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read))
+                        {
+                            sourceStream.CopyTo(entryStream);
+                        }
                     }
                 }
-            }}
-            logger.LogInformation("Архив '{zipLocationRelative}' успешно создан.", zipLocationRelative);
-            return MbResult.Success();
-        }
-        catch (Exception ex)
-        {
-            logger.LogError(ex, "Ошибка при создании архива '{zipLocationRelative}'.", zipLocationRelative);
-            // Очистка: удаляем частично созданный архив в случае сбоя
-            if (File.Exists(fullZipPath)) File.Delete(fullZipPath);
-            return MbResult.Failure("Внутренняя ошибка при создании архива.");
-        }
+
+                logger.LogInformation("Архив '{zipLocationRelative}' успешно создан.", zipLocationRelative);
+                return MbResult.Success();
+            }
+            catch (Exception ex)
+            {
+                // Очистка делегируется внешнему try-catch в LockerService, но мы можем ее продублировать для надежности
+                if (File.Exists(fullZipPath)) File.Delete(fullZipPath);
+                // Логирование уже происходит в LockerService, но можно добавить специфичное для архива
+                logger.LogError(ex, "Критическая ошибка при записи в ZIP-файл '{zipLocationRelative}'.", zipLocationRelative);
+                return MbResult.Failure("Внутренняя ошибка при создании архива.");
+            }
+        });
     }
 
     /// <summary>
@@ -168,7 +180,7 @@ public class ArchiveService(
         string fullZipPath = zipValidationResult.Result;
 
 
-        var destValidationResult = fileManagerService.ValidateAndGetFullPath(zipLocation);
+        var destValidationResult = fileManagerService.ValidateAndGetFullPath(destinationDirectory);
         if (!destValidationResult.IsSuccess)
             return MbResult.Failure($"Неверный путь к папке назначения: {destValidationResult.Error!}");
 
@@ -182,42 +194,37 @@ public class ArchiveService(
 
         try
         {
-            // Убедимся, что папка назначения существует
-            Directory.CreateDirectory(tempDirectory);
-            long currentTotalSize = 0;
-            int fileCount = 0;
-            using (FileStream stream = File.OpenRead(fullZipPath))
+            // 3. Оборачиваем операцию в блокировку по ПАПКЕ НАЗНАЧЕНИЯ
+            return lockerService.ExecuteLocked(fullDestinationPath, () =>
             {
-                var extractResult = SafeExtractRecursive(stream, tempDirectory, 0, ref currentTotalSize, ref fileCount);
-                if (!extractResult.IsSuccess)
+                Directory.CreateDirectory(tempDirectory);
+                long currentTotalSize = 0;
+                int fileCount = 0;
+                using (FileStream stream = File.OpenRead(fullZipPath))
                 {
-                    return extractResult; // Ошибка уже содержит причину
+                    var extractResult = SafeExtractRecursive(stream, tempDirectory, 0, ref currentTotalSize, ref fileCount);
+                    if (!extractResult.IsSuccess)
+                    {
+                        // Если распаковка не удалась, нет смысла продолжать
+                        return extractResult;
+                    }
                 }
-            }
 
-            if (Directory.Exists(fullDestinationPath))
-            {
-                logger.LogWarning(
-                    "{fullDestinationPath} уже содержится, она будет удалена и перезаписана распаковкой архива {fullZipPath}",
-                    fullDestinationPath, fullZipPath);
-                Directory.Delete(fullDestinationPath, true);
-            }
+                if (Directory.Exists(fullDestinationPath))
+                {
+                    logger.LogWarning("{destPath} уже существует, она будет удалена и заменена.", destinationDirectory);
+                    Directory.Delete(fullDestinationPath, true);
+                }
 
-            // 4. Атомарно перемещаем временную папку в целевую
-            Directory.Move(tempDirectory, fullDestinationPath);
-
-            return MbResult.Success();
-        }
-        catch (Exception ex)
-        {
-            logger.LogError(ex, "Ошибка при распаковке архива '{zipLocation}'", zipLocation);
-            // нужно очистить частично распакованные файлы при ошибке
-            Directory.Delete(fullDestinationPath, true); // Рассмотрите такую возможность
-            return MbResult.Failure($"Внутренняя ошибка при распаковке: {ex.Message}");
+                Directory.Move(tempDirectory, fullDestinationPath);
+                logger.LogInformation("Архив '{zipLocation}' успешно распакован в '{destinationDirectory}'", zipLocation, destinationDirectory);
+                return MbResult.Success();
+            });
         }
         finally
         {
-            // удаляем временную директорию
+            // Блок finally для очистки временной папки должен остаться снаружи,
+            // чтобы он сработал даже если не удалось получить блокировку.
             if (Directory.Exists(tempDirectory))
             {
                 Directory.Delete(tempDirectory, true);
