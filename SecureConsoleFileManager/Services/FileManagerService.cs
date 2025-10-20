@@ -37,10 +37,10 @@ public class FileManagerService(
     // Этот метод остается публичным, так как он полезен и для других сервисов (например, ArchiveService)
     public MbResult<string> ValidateAndGetFullPath(string relativePath)
     {
-        if (string.IsNullOrWhiteSpace(relativePath))
-        {
-            return MbResult<string>.Failure("Путь не может быть пустым.");
-        }
+        // if (string.IsNullOrWhiteSpace(relativePath))
+        // {
+        //     return MbResult<string>.Failure("Путь не может быть пустым.");
+        // }
 
         if (relativePath.IndexOfAny(Path.GetInvalidPathChars()) >= 0)
         {

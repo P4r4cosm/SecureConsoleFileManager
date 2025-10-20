@@ -43,6 +43,7 @@
       <PackageReference Include="Serilog.Sinks.Console" Version="6.0.0" />
       <PackageReference Include="Serilog.Sinks.Elasticsearch" Version="9.0.3" />
       <PackageReference Include="Serilog.Sinks.File" Version="7.0.0" />
+      <PackageReference Include="System.CommandLine" Version="2.0.0-rc.2.25502.107" />
     </ItemGroup>
 
     <ItemGroup>
