@@ -3,16 +3,16 @@ namespace SecureConsoleFileManager.Models;
 public class MbResult<T>
 {
     public T Result { get; }
+
+    public string Error { get; } = string.Empty;
     
-    public string? Error { get; }
-    
-    public bool IsSuccess => Error == null;
+    public bool IsSuccess => Error == string.Empty || Error == null;
     
     // Конструкторы для удобства (рекомендую добавить)
     private MbResult(T result)
     {
         Result = result;
-        Error = null;
+        Error = string.Empty;
     }
 
     private MbResult(string error)

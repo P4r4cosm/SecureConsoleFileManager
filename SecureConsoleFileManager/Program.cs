@@ -1,16 +1,14 @@
-﻿
-
-
+﻿using System.Reflection;
+using FluentValidation;
 using MediatR;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
+using SecureConsoleFileManager.Common;
 using SecureConsoleFileManager.Common.Options;
-using SecureConsoleFileManager.Feature.Disks.GetDisksInfo;
-using SecureConsoleFileManager.Feature.Users.LoginUser;
+using SecureConsoleFileManager.Common.UI;
 using SecureConsoleFileManager.Infrastructure;
 using SecureConsoleFileManager.Infrastructure.Interfaces;
 using SecureConsoleFileManager.Infrastructure.Repositories;
@@ -30,17 +28,16 @@ Log.Logger = new LoggerConfiguration().ReadFrom.Configuration(config).CreateLogg
 try
 {
     Log.Information("Application starting up ...");
-    
+
     Log.Information("Initialize file manager directory... ");
-    
+
     var host = Host.CreateDefaultBuilder(args)
         .ConfigureServices((context, services) =>
         {
-            
             services.AddOptions();
-            
+
             services.Configure<FileSystemOptions>(config.GetSection(FileSystemOptions.FileSystemConfig));
-            
+
             var connection = context.Configuration.GetConnectionString("DefaultConnection");
             services.AddDbContext<ApplicationDbContext>(options =>
             {
@@ -50,33 +47,25 @@ try
             // Repositories
             services.AddScoped<IUserRepository, UserRepository>();
             // Services
+            services.AddSingleton<ApplicationState>();
+            services.AddSingleton<IDisplay, ConsoleDisplay>();
             services.AddSingleton<ILockerService, LockerService>();
             services.AddSingleton<IArchiveService, ArchiveService>();
             services.AddSingleton<ICryptoService, CryptoService>();
             services.AddSingleton<IFileManagerService, FileManagerService>();
-            
+
+            // Application (основной цикл принимающий команды)
+            services.AddSingleton<Application>();
+
             // Mediatr
             services.AddMediatR(cfg => cfg.RegisterServicesFromAssembly(typeof(Program).Assembly));
+            services.AddValidatorsFromAssembly(Assembly.GetExecutingAssembly());
+            services.AddTransient(typeof(IPipelineBehavior<,>), typeof(ValidationBehavior<,>));
         }).UseSerilog().Build();
     
-    // Receiving service from DI
-    // var cryptoService = host.Services.GetService<ICryptoService>();
     
-    
-    var mediatr = host.Services.GetService<IMediator>();
-
-    // Create Account
-    // var createUserCommand = new CreateUserCommand("admin", "admin");
-    // var guid = await mediatr!.Send(createUserCommand);
-
-    // Login Account 
-
-    var loginUserCommand = new LoginUserCommand("admin", "admin");
-    var result = await mediatr!.Send(loginUserCommand);
-
-    // GetDisksInfo
-    var getDiskInfocommand = new GetDisksInfoCommand();
-    var result2 = await mediatr!.Send(getDiskInfocommand);
+    var app = host.Services.GetRequiredService<Application>();
+    await app.RunAsync();
 }
 catch (Exception e)
 {
@@ -86,7 +75,8 @@ catch (Exception e)
 
 static void BuildConfiguration(IConfigurationBuilder builder)
 {
-    builder.SetBasePath(Directory.GetCurrentDirectory())
+    var executableLocation = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location)!;
+    builder.SetBasePath(executableLocation)
         .AddJsonFile("appsettings.json", optional: false, reloadOnChange: true).AddJsonFile(
             $"appsettings.{Environment.GetEnvironmentVariable("DOTNET_ENVIRONMENT")}.json", optional: true,
             reloadOnChange: true)

@@ -10,4 +10,6 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
     public DbSet<User> Users { get; set; }
     public DbSet<Operation> Operations { get; set; }
     public DbSet<File> Files { get; set; }
+
+    public DbSet<LogEntity> Logs { get; set; }
 }

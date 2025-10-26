@@ -11,4 +11,13 @@ public class Operation
     public Guid UserId { get; set; }
     
     public Guid FileId { get; set; }
+
+    public Operation() { }
+
+    public Operation(Operation type, Guid userId, Guid fileId)
+    {
+        Created = DateTime.UtcNow;
+        UserId = userId;
+        FileId = fileId;
+    }
 }

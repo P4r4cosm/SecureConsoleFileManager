@@ -1,17 +1,18 @@
 using System.CommandLine;
+using MediatR;
 using SecureConsoleFileManager.Common.UI;
 using SecureConsoleFileManager.Services;
 
 namespace SecureConsoleFileManager.Common;
 
-public class Application(IFileManagerService fileManagerService, ApplicationState applicationState, IDisplay display)
+public class Application(IFileManagerService fileManagerService, ApplicationState applicationState, IDisplay display, IMediator mediator)
 {
     public async Task RunAsync()
     {
-        display.PrintMessageResult("Secure File Manager. Введите 'exit' для выхода.");
+        display.PrintMessage("Secure File Manager. Введите 'exit' для выхода.");
         while (true)
         {
-            display.PrintMessageResult($"{applicationState.CurrentRelativePath}> ");
+            display.PrintMessage($"{applicationState.CurrentRelativePath}> ");
             var commandLine = display.ReadInput();
             if (string.IsNullOrWhiteSpace(commandLine))
                 continue;
@@ -21,9 +22,7 @@ public class Application(IFileManagerService fileManagerService, ApplicationStat
                 break;
             }
 
-            var parser = CommandBuilder.Build(fileManagerService, applicationState, display, commandLine);
-            
-            
+            var parser = CommandBuilder.Build(fileManagerService, mediator, applicationState, display, commandLine);           
             await parser.InvokeAsync();
         }
     }

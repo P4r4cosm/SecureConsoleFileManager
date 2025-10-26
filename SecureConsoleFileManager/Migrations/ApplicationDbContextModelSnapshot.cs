@@ -52,6 +52,33 @@ namespace SecureConsoleFileManager.Migrations
                     b.ToTable("Files");
                 });
 
+            modelBuilder.Entity("SecureConsoleFileManager.Models.LogEntity", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Command")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("Level")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Message")
+                        .IsRequired()
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<Guid?>("OperationId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OperationId");
+
+                    b.ToTable("Logs");
+                });
+
             modelBuilder.Entity("SecureConsoleFileManager.Models.Operation", b =>
                 {
                     b.Property<Guid>("Id")
@@ -88,11 +115,21 @@ namespace SecureConsoleFileManager.Migrations
 
                     b.Property<string>("Password")
                         .IsRequired()
-                        .HasColumnType("text");
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
 
                     b.HasKey("Id");
 
                     b.ToTable("Users");
+                });
+
+            modelBuilder.Entity("SecureConsoleFileManager.Models.LogEntity", b =>
+                {
+                    b.HasOne("SecureConsoleFileManager.Models.Operation", "Operation")
+                        .WithMany()
+                        .HasForeignKey("OperationId");
+
+                    b.Navigation("Operation");
                 });
 #pragma warning restore 612, 618
         }

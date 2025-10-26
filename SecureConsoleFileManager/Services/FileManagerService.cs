@@ -21,7 +21,7 @@ public interface IFileManagerService
     public MbResult<DirectoryInfo> GetDirectoryInfo(string currentDirectoryPath);
     public Task<MbResult<string>> ReadFileAsync(string relativePath);
 
-    public MbResult CreateFile(string relativePath);
+    public MbResult<SecureConsoleFileManager.Models.File> CreateFile(string relativePath);
     public MbResult DeleteFile(string relativePath);
     public Task<MbResult> AppendToFileAsync(string relativePath, string contentToAppend);
 }
@@ -123,14 +123,15 @@ public class FileManagerService(
 
     // ================ Операции с Файлами ==================
 
-    public MbResult CreateFile(string relativePath)
+    public MbResult<SecureConsoleFileManager.Models.File> CreateFile(string relativePath)
     {
         var validationResult = ValidateAndGetFullPath(relativePath);
-        if (!validationResult.IsSuccess) return MbResult.Failure(validationResult.Error!);
+        if (!validationResult.IsSuccess)
+            return MbResult<SecureConsoleFileManager.Models.File>.Failure(validationResult.Error!);
 
         var fullPath = validationResult.Result;
 
-        return lockerService.ExecuteLocked(fullPath, () =>
+        var result = lockerService.ExecuteLocked(fullPath, () =>
         {
             if (File.Exists(fullPath))
             {
@@ -148,6 +149,20 @@ public class FileManagerService(
             logger.LogInformation("Файл создан: {path}", relativePath);
             return MbResult.Success();
         });
+        if (result.IsSuccess)
+        {
+            var fileInfo = new FileInfo(fullPath);
+            var file = new SecureConsoleFileManager.Models.File
+            {
+                Name = fileInfo.Name,
+                Path = relativePath,
+                CreatedAt = fileInfo.CreationTimeUtc,
+                Size = (uint)fileInfo.Length
+            };
+            return MbResult<SecureConsoleFileManager.Models.File>.Success(file);
+        }
+
+        return MbResult<SecureConsoleFileManager.Models.File>.Failure(result.Error!);
     }
 
     public MbResult DeleteFile(string relativePath)

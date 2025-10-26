@@ -1,20 +1,22 @@
 using MediatR;
 using Microsoft.Extensions.Logging;
-using SecureConsoleFileManager.Common.Exceptions;
+using SecureConsoleFileManager.Infrastructure;
 using SecureConsoleFileManager.Infrastructure.Interfaces;
 using SecureConsoleFileManager.Models;
 using SecureConsoleFileManager.Services.Interfaces;
 using Serilog;
+using LogLevel = SecureConsoleFileManager.Models.LogLevel;
 
 namespace SecureConsoleFileManager.Feature.Users.CreateUser;
 
 public class CreateUserHandler(
     IUserRepository userRepository,
     ICryptoService cryptoService,
+    ApplicationDbContext dbContext,
     ILogger<CreateUserHandler> logger)
-    : IRequestHandler<CreateUserCommand, bool>
+    : IRequestHandler<CreateUserCommand, MbResult>
 {
-    public async Task<bool> Handle(CreateUserCommand request, CancellationToken cancellationToken)
+    public async Task<MbResult> Handle(CreateUserCommand request, CancellationToken cancellationToken)
     {
         var login = request.Login;
         var password = request.Password;
@@ -22,20 +24,24 @@ public class CreateUserHandler(
         // Checking if a login is taken
         var user = await userRepository.GetUserByLoginAsync(login, cancellationToken);
         if (user is not null)
-            // Throw Exception
-            throw new UserAlreadyExistsException(login);
+            return MbResult.Failure($"This login is already taken.");
 
         var hashPassword = cryptoService.HashPassword(password);
         var newUser = new User { Login = login, Password = hashPassword };
         try
         {
-            await userRepository.CreateUserAsync(newUser,cancellationToken);
-            return true;
+            await userRepository.CreateUserAsync(newUser, cancellationToken);
+            
+            var logEntity = new LogEntity(LogLevel.Info, Command.CreateUser, $"User {login} has been created.");
+            
+            logger.LogInformation($"User {login} has been created.");
+
+            return MbResult.Success();
         }
-        catch (Exception e)
+        catch (Exception ex)
         {
-            Log.Error($"Database error: {e.Message}");
-            return false;
+            logger.LogError($"Database error: {ex.Message}");
+            return MbResult.Failure("Database error");
         }
     }
 }

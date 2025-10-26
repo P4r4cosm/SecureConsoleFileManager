@@ -9,7 +9,6 @@ public class UserRepository(ILogger<UserRepository> logger, ApplicationDbContext
 {
     public async Task CreateUserAsync(User user, CancellationToken cancellationToken)
     {
-        // TODO: Транзакции
         await dbContext.Users.AddAsync(user, cancellationToken);
         await dbContext.SaveChangesAsync(cancellationToken);
     }
