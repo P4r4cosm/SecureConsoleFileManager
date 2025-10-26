@@ -41,6 +41,7 @@ public class LoginUserHandler(
             catch (Exception ex)
             {
                 logger.LogError($"Error while saving log to database {ex.Message}");
+                return MbResult<User>.Failure("Database error");
             }
 
             logger.LogInformation("The user {user} has successfully logged in", user.Login);

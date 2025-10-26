@@ -14,10 +14,11 @@ public class Operation
 
     public Operation() { }
 
-    public Operation(Operation type, Guid userId, Guid fileId)
+    public Operation(OperationType type, Guid userId, Guid fileId)
     {
         Created = DateTime.UtcNow;
         UserId = userId;
         FileId = fileId;
+        Type = type;
     }
 }

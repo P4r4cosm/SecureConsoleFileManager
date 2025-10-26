@@ -14,7 +14,7 @@ public interface IFileManagerService
     public MbResult CreateDirectory(string relativePath);
     public MbResult<string> ValidateAndGetFullPath(string relativePath);
 
-    public MbResult DeleteDirectory(string relativePath, bool recursive);
+    public MbResult<List<FileInfo>> DeleteDirectory(string relativePath, bool recursive);
 
     public MbResult Move(string sourceRelativePath, string destinationRelativePath);
 
@@ -88,24 +88,58 @@ public class FileManagerService(
         });
     }
 
-    public MbResult DeleteDirectory(string relativePath, bool recursive = true)
+    public MbResult<List<FileInfo>> DeleteDirectory(string relativePath, bool recursive)
     {
         var validationResult = ValidateAndGetFullPath(relativePath);
-        if (!validationResult.IsSuccess) return MbResult.Failure(validationResult.Error!);
+        if (!validationResult.IsSuccess)
+            return MbResult<List<FileInfo>>.Failure(validationResult.Error!); // Возвращаем ошибку нового типа
 
         var fullPath = validationResult.Result;
-
-        return lockerService.ExecuteLocked(fullPath, () =>
+        var filesToDelete = new List<FileInfo>();
+        // ExecuteLocked теперь тоже должен работать с новым типом
+        var result = lockerService.ExecuteLocked(fullPath, () =>
         {
-            if (!Directory.Exists(fullPath))
+            try
             {
-                return MbResult.Failure($"Директория не найдена: {relativePath}");
-            }
+                if (!Directory.Exists(fullPath))
+                {
+                    return MbResult.Failure($"Директория не найдена: {relativePath}");
+                }
 
-            Directory.Delete(fullPath, recursive);
-            logger.LogInformation("Директория удалена: {path}", relativePath);
-            return MbResult.Success();
+                var directoryInfo = new DirectoryInfo(fullPath);
+                if (recursive)
+                {
+                    // Собираем информацию о файлах ДО удаления
+                    // GetFiles безопасен, так как он вернет пустой массив, если директория пуста
+                    filesToDelete.AddRange(directoryInfo.GetFiles("*", SearchOption.AllDirectories));
+                }
+                else
+                {
+                    if (Directory.EnumerateFileSystemEntries(fullPath).Any())
+                    {
+                        return MbResult.Failure(
+                            $"Директория '{relativePath}' не пуста. Для удаления используйте флаг -r.");
+                    }
+                }
+
+                // Выполняем удаление
+                Directory.Delete(fullPath, recursive);
+
+                logger.LogInformation("Директория удалена: {path}, рекурсивно: {recursive}, файлов удалено: {count}",
+                    relativePath, recursive, filesToDelete.Count);
+
+                // Возвращаем успешный результат со списком файлов
+                return MbResult.Success();
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Ошибка при удалении директории {path}", relativePath);
+                return MbResult.Failure($"Произошла ошибка: {ex.Message}");
+            }
         });
+        return result.IsSuccess
+            ? MbResult<List<FileInfo>>.Success(filesToDelete)
+            : MbResult<List<FileInfo>>.Failure(result.Error!);
     }
 
     public MbResult<DirectoryInfo> GetDirectoryInfo(string relativePath)
@@ -196,12 +230,12 @@ public class FileManagerService(
 
         var fullPath = validationResult.Result;
 
-        var res =  lockerService.ExecuteLocked(fullPath,  () =>
+        var res = lockerService.ExecuteLocked(fullPath, () =>
         {
             if (!File.Exists(fullPath))
                 return MbResult.Failure($"Файл не найден: {relativePath}");
 
-             File.AppendAllText(fullPath, contentToAppend);
+            File.AppendAllText(fullPath, contentToAppend);
             logger.LogInformation("Данные дописаны в файл: {path}", relativePath);
             return MbResult.Success();
         });

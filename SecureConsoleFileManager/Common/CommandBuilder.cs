@@ -1,6 +1,8 @@
 using System.CommandLine;
 using MediatR;
 using SecureConsoleFileManager.Common.UI;
+using SecureConsoleFileManager.Feature.Directories.CreateDirectory;
+using SecureConsoleFileManager.Feature.Directories.DeleteDirectory;
 using SecureConsoleFileManager.Feature.Disks.GetDisksInfo;
 using SecureConsoleFileManager.Feature.Files.CreateFile;
 using SecureConsoleFileManager.Feature.Files.DeleteFile;
@@ -219,6 +221,45 @@ public static class CommandBuilder
                 : $"Ошибка при чтении файла: {result.Error}");
         });
 
+        // ======= mkdir =======
+        var mkdirCommand = new Command("mkdir", "Создаёт новую директорию");
+        var mkdirArgument = new Argument<string>("directoryName")
+        {
+            Description = "Название создаваемой директории",
+        };
+        mkdirCommand.Arguments.Add(mkdirArgument);
+        mkdirCommand.SetAction(async (pathResult) =>
+        {
+            var argument = pathResult.GetValue(mkdirArgument);
+            var createDirectoryCommand = new CreateDirectoryCommand(argument);
+            var result = await mediator.Send(createDirectoryCommand);
+            display.PrintMessage(result.IsSuccess
+                ? $"Директория '{argument}' успешно создана"
+                : $"Ошибка при создании директории: {result.Error}");
+        });
+
+
+        // ========== rmdir ===========
+        var rmdirCommand = new Command("rmdir", "Удаляет директорию");
+        var rmdirArgument = new Argument<string>("directoryName")
+        {
+            Description = "Название удаляемой директории",
+        };
+        var recursiveOption = new Option<bool>("recursive",
+            aliases: new[] { "-r", "--recursive" });
+        rmdirCommand.Arguments.Add(rmdirArgument);
+        rmdirCommand.Options.Add(recursiveOption);
+        rmdirCommand.SetAction(async (pathResult) =>
+        {
+            var argument = pathResult.GetValue(rmdirArgument);
+            var isRecursive = pathResult.GetValue(recursiveOption);
+            var deleteDirectoryCommand = new DeleteDirectoryCommand(argument, isRecursive);
+            var result = await mediator.Send(deleteDirectoryCommand);
+            display.PrintMessage(result.IsSuccess
+                ? $"Директория '{argument}' успешно удалена"
+                : $"Ошибка при удалении директории: {result.Error}");
+        });
+
         var rootCommand = new RootCommand("Secure File Manager")
         {
             lsCommand,
@@ -231,7 +272,9 @@ public static class CommandBuilder
             touchCommand,
             rmCommand,
             wrCommand,
-            catCommand
+            catCommand,
+            mkdirCommand,
+            rmdirCommand
         };
         return rootCommand.Parse(commandLine);
     }

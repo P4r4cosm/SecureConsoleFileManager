@@ -57,6 +57,7 @@ namespace SecureConsoleFileManager.Feature.Files.CreateFile
                 catch (Exception ex)
                 {
                     logger.LogError($"Error while saving log to database {ex.Message}");
+                    return MbResult.Failure($"Физически файл создан, но произошла критическая ошибка при обновлении базы данных: {ex.Message}");
                 }
                 return MbResult.Success();
             }

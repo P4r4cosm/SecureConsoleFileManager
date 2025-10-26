@@ -52,6 +52,7 @@ public class ReadFileHandler(
             catch (Exception ex)
             {
                 logger.LogError($"Error while saving log to database {ex.Message}");
+                return MbResult<string>.Failure($"Произошла ошибка при обновлении базы данных: {ex.Message}");
             }
 
             return MbResult<string>.Success(result.Result);
