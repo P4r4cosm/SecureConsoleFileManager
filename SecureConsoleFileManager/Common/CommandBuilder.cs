@@ -3,9 +3,14 @@ using MediatR;
 using SecureConsoleFileManager.Common.UI;
 using SecureConsoleFileManager.Feature.Disks.GetDisksInfo;
 using SecureConsoleFileManager.Feature.Files.CreateFile;
+using SecureConsoleFileManager.Feature.Files.DeleteFile;
+using SecureConsoleFileManager.Feature.Files.ReadFile;
+using SecureConsoleFileManager.Feature.Files.WriteInFile;
 using SecureConsoleFileManager.Feature.Users.CreateUser;
 using SecureConsoleFileManager.Feature.Users.LoginUser;
+using SecureConsoleFileManager.Models;
 using SecureConsoleFileManager.Services;
+using Command = System.CommandLine.Command;
 
 namespace SecureConsoleFileManager.Common;
 
@@ -152,8 +157,66 @@ public static class CommandBuilder
             var createFileCommand = new CreateFileCommand(argument);
             var result = await mediator.Send(createFileCommand);
             display.PrintMessage(result.IsSuccess
-                ? $"{argument} файл успешно создаан"
+                ? $"{argument} файл успешно создан"
                 : $"Ошибка при создании файла: {result.Error}");
+        });
+
+        // ========== rm ===========
+        var rmCommand = new Command("rm", "Удаляет файл");
+        var rmArgument = new Argument<string>("name")
+        {
+            Description = "Название файла или путь для создания файла",
+        };
+        rmCommand.Arguments.Add(rmArgument);
+        rmCommand.SetAction(async (pathResult) =>
+        {
+            var argument = pathResult.GetValue(rmArgument);
+            var deleteFileCommand = new DeleteFileCommand(argument);
+            var result = await mediator.Send(deleteFileCommand);
+            display.PrintMessage(result.IsSuccess
+                ? $"{argument} файл успешно удалён"
+                : $"Ошибка при удалении файла: {result.Error}");
+        });
+
+
+        // ========== wr ==========
+        var wrCommand = new Command("wr", "Дозаписывает информацию в файл");
+        var wrFileArgument = new Argument<string>("name")
+        {
+            Description = "Название файла или путь для создания файла"
+        };
+        var wrInfoArgument = new Argument<string>("info")
+        {
+            Description = "Информация для записи в файл"
+        };
+        wrCommand.Arguments.Add(wrFileArgument);
+        wrCommand.Arguments.Add(wrInfoArgument);
+        wrCommand.SetAction(async (ParseResult) =>
+        {
+            var fileArgument = ParseResult.GetValue(wrFileArgument);
+            var infoArgument = ParseResult.GetValue(wrInfoArgument);
+            var writeInFileCommand = new WriteInFileCommand(fileArgument, infoArgument);
+            var result = await mediator.Send(writeInFileCommand);
+            display.PrintMessage(result.IsSuccess
+                ? $"{fileArgument} файл успешно дозаписан"
+                : $"Ошибка при записи в файл: {result.Error}");
+        });
+
+        // ========== cat ============
+        var catCommand = new Command("cat", "Выводит содержимое файла на экран");
+        var catArgument = new Argument<string>("name")
+        {
+            Description = "Название файла или путь для создания файла"
+        };
+        catCommand.Arguments.Add(catArgument);
+        catCommand.SetAction(async (ParseResult) =>
+        {
+            var fileArgument = ParseResult.GetValue(catArgument);
+            var readFileCommand = new ReadFileCommand(fileArgument);
+            var result = await mediator.Send(readFileCommand);
+            display.PrintMessage(result.IsSuccess
+                ? result.Result
+                : $"Ошибка при чтении файла: {result.Error}");
         });
 
         var rootCommand = new RootCommand("Secure File Manager")
@@ -165,7 +228,10 @@ public static class CommandBuilder
             createUserCommand,
             pwdCommand,
             diskCommand,
-            touchCommand
+            touchCommand,
+            rmCommand,
+            wrCommand,
+            catCommand
         };
         return rootCommand.Parse(commandLine);
     }

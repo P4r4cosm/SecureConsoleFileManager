@@ -4,5 +4,6 @@ public enum OperationType
 {
     Creation,
     Modification,
-    Deletion
+    Deletion,
+    Read
 }

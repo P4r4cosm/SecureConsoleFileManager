@@ -23,7 +23,7 @@ public interface IFileManagerService
 
     public MbResult<SecureConsoleFileManager.Models.File> CreateFile(string relativePath);
     public MbResult DeleteFile(string relativePath);
-    public Task<MbResult> AppendToFileAsync(string relativePath, string contentToAppend);
+    public Task<MbResult<FileInfo>> AppendToFileAsync(string relativePath, string contentToAppend);
 }
 
 public class FileManagerService(
@@ -165,10 +165,16 @@ public class FileManagerService(
         return MbResult<SecureConsoleFileManager.Models.File>.Failure(result.Error!);
     }
 
+    /// <summary>
+    /// Return relativePath
+    /// </summary>
+    /// <param name="relativePath"></param>
+    /// <returns> Return relativePath</returns>
     public MbResult DeleteFile(string relativePath)
     {
         var validationResult = ValidateAndGetFullPath(relativePath);
-        if (!validationResult.IsSuccess) return MbResult.Failure(validationResult.Error!);
+        if (!validationResult.IsSuccess)
+            return MbResult.Failure(validationResult.Error!);
 
         var fullPath = validationResult.Result;
 
@@ -183,22 +189,29 @@ public class FileManagerService(
         });
     }
 
-    public Task<MbResult> AppendToFileAsync(string relativePath, string contentToAppend)
+    public async Task<MbResult<FileInfo>> AppendToFileAsync(string relativePath, string contentToAppend)
     {
         var validationResult = ValidateAndGetFullPath(relativePath);
-        if (!validationResult.IsSuccess) return Task.FromResult(MbResult.Failure(validationResult.Error!));
+        if (!validationResult.IsSuccess) return MbResult<FileInfo>.Failure(validationResult.Error!);
 
         var fullPath = validationResult.Result;
 
-        return lockerService.ExecuteLockedAsync(fullPath, async () =>
+        var res =  lockerService.ExecuteLocked(fullPath,  () =>
         {
             if (!File.Exists(fullPath))
                 return MbResult.Failure($"Файл не найден: {relativePath}");
 
-            await File.AppendAllTextAsync(fullPath, contentToAppend);
+             File.AppendAllText(fullPath, contentToAppend);
             logger.LogInformation("Данные дописаны в файл: {path}", relativePath);
             return MbResult.Success();
         });
+        if (res.IsSuccess)
+        {
+            var fileInfo = new FileInfo(fullPath);
+            return MbResult<FileInfo>.Success(fileInfo);
+        }
+
+        return MbResult<FileInfo>.Failure(res.Error!);
     }
 
     public async Task<MbResult<string>> ReadFileAsync(string relativePath)
