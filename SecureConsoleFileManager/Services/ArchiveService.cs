@@ -8,6 +8,20 @@ using File = System.IO.File;
 
 namespace SecureConsoleFileManager.Services;
 
+public interface IArchiveService
+{
+    public MbResult<FileInfo> SafeCreateArchive(IEnumerable<string> filePaths, string zipLocation);
+
+
+    /// <summary>
+    /// Безопасно извлекает файлы из архива и записывает в destinationDirectory
+    /// </summary>
+    /// <param name="zipLocation">относительный юзера путь к архиву</param>
+    /// <param name="destinationDirectory">относительный путь юзера</param>
+    /// <returns></returns>
+    public MbResult<List<FileInfo>> SafeExtract(string zipLocation, string destinationDirectory);
+}
+
 public class ArchiveService(
     IOptions<FileSystemOptions> fileSystemOptions,
     ILogger<ArchiveService> logger,
@@ -31,6 +45,9 @@ public class ArchiveService(
 
     // Максимальное число архивируемых файлов
     private const int MaxSourceFileCount = 10000;
+    
+    // Максимальный коэффициент сжатия (uncompressed / compressed)
+    private const double MaxCompressionRatio = 100.0;
 
     /// <summary>
     /// Рекурсивно сканирует путь (файл или директорию), проверяя соответствие политикам безопасности.
@@ -94,12 +111,12 @@ public class ArchiveService(
     /// </summary>
     /// <param name="relativePaths">Перечисление относительных путей к файлам и папкам.</param>
     /// <param name="zipLocationRelative">Относительный путь для сохранения ZIP-архива.</param>
-    public MbResult SafeCreateArchive(IEnumerable<string> relativePaths, string zipLocationRelative)
+    public MbResult<FileInfo> SafeCreateArchive(IEnumerable<string> relativePaths, string zipLocationRelative)
     {
         var zipValidation = fileManagerService.ValidateAndGetFullPath(zipLocationRelative);
 
         if (!zipValidation.IsSuccess)
-            return MbResult.Failure($"Неверный путь для сохранения архива: {zipValidation.Error}");
+            return MbResult<FileInfo>.Failure($"Неверный путь для сохранения архива: {zipValidation.Error}");
         string fullZipPath = zipValidation.Result;
 
         var fullSourcePaths = new List<string>();
@@ -107,7 +124,7 @@ public class ArchiveService(
         {
             var fullPathValidation = fileManagerService.ValidateAndGetFullPath(relativePath);
             if (!fullPathValidation.IsSuccess)
-                return MbResult.Failure($"Неверный путь в списке источников: {fullPathValidation.Error}");
+                return MbResult<FileInfo>.Failure($"Неверный путь в списке источников: {fullPathValidation.Error}");
             fullSourcePaths.Add(fullPathValidation.Result);
         }
 
@@ -118,14 +135,14 @@ public class ArchiveService(
         {
             var scanResult = ScanAndValidatePathRecursive(fullPath, ref totalSize, ref fileCount, processedPaths);
             if (!scanResult.IsSuccess)
-                return scanResult;
+                MbResult<FileInfo>.Failure(scanResult.Error!);
         }
 
         logger.LogInformation(
             "Проверка перед архивацией пройдена. Файлов: {fileCount}, общий размер: {totalSize} байт.", fileCount,
             totalSize);
-
-        return lockerService.ExecuteLocked(fullZipPath, () =>
+        FileInfo fileInfo = null;
+        var result = lockerService.ExecuteLocked(fullZipPath, () =>
         {
             try
             {
@@ -152,6 +169,7 @@ public class ArchiveService(
                     }
                 }
 
+                fileInfo = new FileInfo(fullZipPath);
                 logger.LogInformation("Архив '{zipLocationRelative}' успешно создан.", zipLocationRelative);
                 return MbResult.Success();
             }
@@ -160,10 +178,14 @@ public class ArchiveService(
                 // Очистка делегируется внешнему try-catch в LockerService, но мы можем ее продублировать для надежности
                 if (File.Exists(fullZipPath)) File.Delete(fullZipPath);
                 // Логирование уже происходит в LockerService, но можно добавить специфичное для архива
-                logger.LogError(ex, "Критическая ошибка при записи в ZIP-файл '{zipLocationRelative}'.", zipLocationRelative);
+                logger.LogError(ex, "Критическая ошибка при записи в ZIP-файл '{zipLocationRelative}'.",
+                    zipLocationRelative);
                 return MbResult.Failure("Внутренняя ошибка при создании архива.");
             }
         });
+        return result.IsSuccess
+            ? MbResult<FileInfo>.Success(fileInfo!)
+            : MbResult<FileInfo>.Failure(result.Error!);
     }
 
     /// <summary>
@@ -172,65 +194,80 @@ public class ArchiveService(
     /// <param name="zipLocation">относительный юзера путь к архиву</param>
     /// <param name="destinationDirectory">относительный путь юзера (если директории нет, она будет создана)</param>
     /// <returns></returns>
-    public MbResult SafeExtract(string zipLocation, string destinationDirectory)
+    public MbResult<List<FileInfo>> SafeExtract(string zipLocation, string destinationDirectory)
+{
+    var zipValidationResult = fileManagerService.ValidateAndGetFullPath(zipLocation);
+    if (!zipValidationResult.IsSuccess)
+        return MbResult<List<FileInfo>>.Failure($"Неверный путь к архиву: {zipValidationResult.Error}");
+    
+    string fullZipPath = zipValidationResult.Result;
+
+    var destValidationResult = fileManagerService.ValidateAndGetFullPath(destinationDirectory);
+    if (!destValidationResult.IsSuccess)
+        return MbResult<List<FileInfo>>.Failure($"Неверный путь к папке назначения: {destValidationResult.Error}");
+    
+    string fullDestinationPath = destValidationResult.Result;
+    string tempDirectory = Path.Combine(fileSystemOptions.Value.RootPath,"unpack_" + Guid.NewGuid().ToString());
+
+    // 1. Объявляем переменную для результата ЗА ПРЕДЕЛАМИ лямбды
+    List<FileInfo> extractedFiles = null;
+
+    try
     {
-        var zipValidationResult = fileManagerService.ValidateAndGetFullPath(zipLocation);
-        if (!zipValidationResult.IsSuccess)
-            return MbResult.Failure($"Неверный путь к архиву: {zipValidationResult.Error!}");
-        string fullZipPath = zipValidationResult.Result;
-
-
-        var destValidationResult = fileManagerService.ValidateAndGetFullPath(destinationDirectory);
-        if (!destValidationResult.IsSuccess)
-            return MbResult.Failure($"Неверный путь к папке назначения: {destValidationResult.Error!}");
-
-
-        string fullDestinationPath = destValidationResult.Result;
-
-
-        // 1. Создаем уникальную временную директорию
-        string tempDirectory = Path.Combine(Path.GetTempPath(), "unpack_" + Guid.NewGuid().ToString());
-
-
-        try
+        // 2. Выполняем блокировку. `lockerService` вернет обычный `MbResult`.
+        var lockResult = lockerService.ExecuteLocked(fullDestinationPath, () =>
         {
-            // 3. Оборачиваем операцию в блокировку по ПАПКЕ НАЗНАЧЕНИЯ
-            return lockerService.ExecuteLocked(fullDestinationPath, () =>
+            Directory.CreateDirectory(tempDirectory);
+            long currentTotalSize = 0;
+            int fileCount = 0;
+            using (FileStream stream = File.OpenRead(fullZipPath))
             {
-                Directory.CreateDirectory(tempDirectory);
-                long currentTotalSize = 0;
-                int fileCount = 0;
-                using (FileStream stream = File.OpenRead(fullZipPath))
+                var extractResult = SafeExtractRecursive(stream, tempDirectory, 0, ref currentTotalSize, ref fileCount);
+                if (!extractResult.IsSuccess)
                 {
-                    var extractResult = SafeExtractRecursive(stream, tempDirectory, 0, ref currentTotalSize, ref fileCount);
-                    if (!extractResult.IsSuccess)
-                    {
-                        // Если распаковка не удалась, нет смысла продолжать
-                        return extractResult;
-                    }
+                    // Лямбда возвращает обычный MbResult.Failure
+                    return extractResult;
                 }
-
-                if (Directory.Exists(fullDestinationPath))
-                {
-                    logger.LogWarning("{destPath} уже существует, она будет удалена и заменена.", destinationDirectory);
-                    Directory.Delete(fullDestinationPath, true);
-                }
-
-                Directory.Move(tempDirectory, fullDestinationPath);
-                logger.LogInformation("Архив '{zipLocation}' успешно распакован в '{destinationDirectory}'", zipLocation, destinationDirectory);
-                return MbResult.Success();
-            });
-        }
-        finally
-        {
-            // Блок finally для очистки временной папки должен остаться снаружи,
-            // чтобы он сработал даже если не удалось получить блокировку.
-            if (Directory.Exists(tempDirectory))
-            {
-                Directory.Delete(tempDirectory, true);
             }
+
+            if (Directory.Exists(fullDestinationPath))
+            {
+                logger.LogWarning("{destPath} уже существует, она будет удалена и заменена.", destinationDirectory);
+                Directory.Delete(fullDestinationPath, true);
+            }
+
+            Directory.Move(tempDirectory, fullDestinationPath);
+
+            // 3. В случае успеха, ПРИСВАИВАЕМ ЗНАЧЕНИЕ внешней переменной
+            var destinationDirInfo = new DirectoryInfo(fullDestinationPath);
+            extractedFiles = destinationDirInfo.GetFiles("*", SearchOption.AllDirectories).ToList();
+
+            logger.LogInformation("Архив '{zipLocation}' успешно распакован в '{destinationDirectory}'. Найдено {count} файлов.", 
+                zipLocation, destinationDirectory, extractedFiles.Count);
+            
+            // 4. Лямбда возвращает обычный MbResult.Success
+            return MbResult.Success();
+        });
+
+        // 5. Анализируем результат работы lockerService
+        if (!lockResult.IsSuccess)
+        {
+            // Если блокировка или операция внутри не удались, возвращаем ошибку
+            return MbResult<List<FileInfo>>.Failure(lockResult.Error!);
+        }
+
+        // Если все прошло успешно, `extractedFiles` теперь содержит данные.
+        // Возвращаем их в дженерик-результате.
+        return MbResult<List<FileInfo>>.Success(extractedFiles);
+    }
+    finally
+    {
+        if (Directory.Exists(tempDirectory))
+        {
+            Directory.Delete(tempDirectory, true);
         }
     }
+}
 
     private MbResult SafeExtractRecursive(Stream zipStream, string destinationDirectory, int currentDepth,
         ref long totalSize, ref int fileCount)
@@ -307,6 +344,24 @@ public class ArchiveService(
                 // Если это обычный файл - распаковываем с проверкой размеров (защита от ZIP-бомб)
                 else
                 {
+                    // проверка кэффа сжатия
+                    if (entry.CompressedLength > 0) // Избегаем деления на ноль
+                    {
+                        double compressionRatio = (double)entry.Length / entry.CompressedLength;
+                        if (compressionRatio > MaxCompressionRatio)
+                        {
+                            logger.LogWarning("Обнаружен подозрительно высокий коэффициент сжатия ({ratio}) для файла '{file}'. Операция прервана.", 
+                                compressionRatio, entry.FullName);
+                            return MbResult.Failure($"Файл '{entry.FullName}' имеет слишком высокий коэффициент сжатия. Возможно, это zip-бомба.");
+                        }
+                    }
+                    // Также проверяем случай, когда сжатый размер 0, а распакованный - нет (бесконечный коэф.)
+                    else if (entry.Length > 0)
+                    {
+                        logger.LogWarning("Обнаружен файл '{file}' с нулевым сжатым размером, но ненулевым размером после распаковки. Операция прервана.", entry.FullName);
+                        return MbResult.Failure($"Файл '{entry.FullName}' имеет некорректные размеры (попытка распаковки из нуля байт).");
+                    }
+                    
                     // Убедимся, что директория для файла существует
                     Directory.CreateDirectory(Path.GetDirectoryName(entryFullPath));
 

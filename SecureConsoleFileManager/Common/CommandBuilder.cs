@@ -1,6 +1,8 @@
 using System.CommandLine;
 using MediatR;
 using SecureConsoleFileManager.Common.UI;
+using SecureConsoleFileManager.Feature.Archives.CreateArchive;
+using SecureConsoleFileManager.Feature.Archives.UnzipArchive;
 using SecureConsoleFileManager.Feature.Directories.CreateDirectory;
 using SecureConsoleFileManager.Feature.Directories.DeleteDirectory;
 using SecureConsoleFileManager.Feature.Disks.GetDisksInfo;
@@ -283,6 +285,60 @@ public static class CommandBuilder
                 ? $"'{sourceArgument}' успешно перемещен в '{destinationArgument}'"
                 : $"Ошибка при перемещении: {result.Error}");
         });
+        
+        // ========== zip ===========
+        var zipCommand = new Command("zip", "Создаёт ZIP-архив из указанных файлов и директорий.");
+        var zipArchiveArgument = new Argument<string>("archive-name")
+        {
+            Description = "Имя создаваемого архива (например, 'my-archive.zip')."
+        };
+        var zipSourcesArgument = new Argument<string[]>("sources")
+        {
+            Description = "Один или несколько файлов/директорий для добавления в архив.",
+            Arity = ArgumentArity.OneOrMore // Указываем, что источников должен быть хотя бы один
+        };
+        zipCommand.Arguments.Add(zipArchiveArgument);
+        zipCommand.Arguments.Add(zipSourcesArgument);
+
+        zipCommand.SetAction(async (parseResult) =>
+        {
+            var archiveName = parseResult.GetValue(zipArchiveArgument);
+            var sources = parseResult.GetValue(zipSourcesArgument);
+
+            var createArchiveCommand = new CreateArchiveCommand(archiveName, sources);
+            var result = await mediator.Send(createArchiveCommand);
+
+            display.PrintMessage(result.IsSuccess
+                ? $"Архив '{archiveName}' успешно создан."
+                : $"Ошибка при создании архива: {result.Error}");
+        });
+        
+        
+        // ========== unzip ===========
+        var unzipCommand = new Command("unzip", "Распаковывает ZIP-архив в указанную директорию.");
+        var unzipArchiveArgument = new Argument<string>("archive-path")
+        {
+            Description = "Путь к архиву, который нужно распаковать."
+        };
+        var unzipDestinationArgument = new Argument<string>("destination-directory")
+        {
+            Description = "Папка, в которую будут извлечены файлы."
+        };
+        unzipCommand.Arguments.Add(unzipArchiveArgument);
+        unzipCommand.Arguments.Add(unzipDestinationArgument);
+
+        unzipCommand.SetAction(async (parseResult) =>
+        {
+            var archivePath = parseResult.GetValue(unzipArchiveArgument);
+            var destination = parseResult.GetValue(unzipDestinationArgument);
+
+            var extractArchiveCommand = new ExtractArchiveCommand(archivePath, destination);
+            var result = await mediator.Send(extractArchiveCommand);
+
+            display.PrintMessage(result.IsSuccess
+                ? $"Архив '{archivePath}' успешно распакован в '{destination}'."
+                : $"Ошибка при распаковке архива: {result.Error}");
+        });
 
         var rootCommand = new RootCommand("Secure File Manager")
         {
@@ -299,7 +355,10 @@ public static class CommandBuilder
             catCommand,
             mkdirCommand,
             rmdirCommand,
-            mvCommand
+            mvCommand,
+            zipCommand,
+            unzipCommand
+            
         };
         return rootCommand.Parse(commandLine);
     }
