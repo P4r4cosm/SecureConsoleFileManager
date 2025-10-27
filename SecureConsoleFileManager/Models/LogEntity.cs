@@ -23,9 +23,7 @@ namespace SecureConsoleFileManager.Models
         DeleteDirectory,
         CreateDirectory,
         ReadFile,
-        MoveFile,
-        MoveDirectory,
-        MoveDirectoryRecursive
+        Move
     }
     public class LogEntity
     {

@@ -8,6 +8,7 @@ using SecureConsoleFileManager.Feature.Files.CreateFile;
 using SecureConsoleFileManager.Feature.Files.DeleteFile;
 using SecureConsoleFileManager.Feature.Files.ReadFile;
 using SecureConsoleFileManager.Feature.Files.WriteInFile;
+using SecureConsoleFileManager.Feature.Move;
 using SecureConsoleFileManager.Feature.Users.CreateUser;
 using SecureConsoleFileManager.Feature.Users.LoginUser;
 using SecureConsoleFileManager.Models;
@@ -259,6 +260,29 @@ public static class CommandBuilder
                 ? $"Директория '{argument}' успешно удалена"
                 : $"Ошибка при удалении директории: {result.Error}");
         });
+        
+        // ========== mv ===========
+        var mvCommand = new Command("mv", "Перемещает файл или директорию");
+        var mvSourceArgument = new Argument<string>("source")
+        {
+            Description = "Исходный путь к файлу или директории"
+        };
+        var mvDestinationArgument = new Argument<string>("destination")
+        {
+            Description = "Целевой путь"
+        };
+        mvCommand.Arguments.Add(mvSourceArgument);
+        mvCommand.Arguments.Add(mvDestinationArgument);
+        mvCommand.SetAction(async (parseResult) =>
+        {
+            var sourceArgument = parseResult.GetValue(mvSourceArgument);
+            var destinationArgument = parseResult.GetValue(mvDestinationArgument);
+            var moveCommand = new MoveCommand(sourceArgument, destinationArgument);
+            var result = await mediator.Send(moveCommand);
+            display.PrintMessage(result.IsSuccess
+                ? $"'{sourceArgument}' успешно перемещен в '{destinationArgument}'"
+                : $"Ошибка при перемещении: {result.Error}");
+        });
 
         var rootCommand = new RootCommand("Secure File Manager")
         {
@@ -274,7 +298,8 @@ public static class CommandBuilder
             wrCommand,
             catCommand,
             mkdirCommand,
-            rmdirCommand
+            rmdirCommand,
+            mvCommand
         };
         return rootCommand.Parse(commandLine);
     }

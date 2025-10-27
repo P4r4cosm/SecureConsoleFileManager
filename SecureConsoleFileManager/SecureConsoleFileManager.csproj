@@ -53,8 +53,4 @@
       </None>
     </ItemGroup>
 
-    <ItemGroup>
-      <Folder Include="Feature\Move\" />
-    </ItemGroup>
-
 </Project>

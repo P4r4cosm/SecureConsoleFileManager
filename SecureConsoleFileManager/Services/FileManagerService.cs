@@ -16,7 +16,7 @@ public interface IFileManagerService
 
     public MbResult<List<FileInfo>> DeleteDirectory(string relativePath, bool recursive);
 
-    public MbResult Move(string sourceRelativePath, string destinationRelativePath);
+    public MbResult<List<FileInfo>> Move(string sourceRelativePath, string destinationRelativePath);
 
     public MbResult<DirectoryInfo> GetDirectoryInfo(string currentDirectoryPath);
     public Task<MbResult<string>> ReadFileAsync(string relativePath);
@@ -274,34 +274,59 @@ public class FileManagerService(
 
     // ================ Общие операции ==================
 
-    public MbResult Move(string sourceRelativePath, string destinationRelativePath)
+    public MbResult<List<FileInfo>> Move(string sourceRelativePath, string destinationRelativePath)
     {
         var sourceValidation = ValidateAndGetFullPath(sourceRelativePath);
-        if (!sourceValidation.IsSuccess) return MbResult.Failure($"Неверный исходный путь: {sourceValidation.Error}");
+        if (!sourceValidation.IsSuccess)
+            return MbResult<List<FileInfo>>.Failure($"Неверный исходный путь: {sourceValidation.Error}");
         var fullSourcePath = sourceValidation.Result;
 
         var destValidation = ValidateAndGetFullPath(destinationRelativePath);
-        if (!destValidation.IsSuccess) return MbResult.Failure($"Неверный целевой путь: {destValidation.Error}");
+        if (!destValidation.IsSuccess)
+            return MbResult<List<FileInfo>>.Failure($"Неверный целевой путь: {destValidation.Error}");
         var fullDestPath = destValidation.Result;
-
-        return lockerService.ExecuteLocked(fullSourcePath, fullDestPath, () =>
+        var filesToMove = new List<FileInfo>();
+        var result = lockerService.ExecuteLocked(fullSourcePath, fullDestPath, () =>
         {
-            if (!File.Exists(fullSourcePath) && !Directory.Exists(fullSourcePath))
+            if (Directory.Exists(fullSourcePath))
             {
+                var dirInfo = new DirectoryInfo(fullSourcePath);
+                // Рекурсивно получаем все файлы из исходной директории
+                filesToMove.AddRange(dirInfo.GetFiles("*", SearchOption.AllDirectories));
+            }
+            else if (File.Exists(fullSourcePath))
+            {
+                // Если это просто файл, добавляем только его
+                filesToMove.Add(new FileInfo(fullSourcePath));
+            }
+            else
+            {
+                // Если источник не найден ни как файл, ни как директория
                 return MbResult.Failure($"Исходный путь не найден: {sourceRelativePath}");
             }
-
+            
+            // 2. Проверяем, не занят ли целевой путь
             if (File.Exists(fullDestPath) || Directory.Exists(fullDestPath))
             {
                 return MbResult.Failure($"Целевой путь уже занят: {destinationRelativePath}");
             }
 
-            // Создаем директорию, если ее нет
-            Directory.CreateDirectory(Path.GetDirectoryName(fullDestPath));
+            // 3. Создаем родительскую директорию для целевого пути, если ее нет
+            var destinationDirectory = Path.GetDirectoryName(fullDestPath);
+            if (destinationDirectory != null)
+            {
+                Directory.CreateDirectory(destinationDirectory);
+            }
 
+            // 4. Выполняем перемещение
             Directory.Move(fullSourcePath, fullDestPath);
-            logger.LogInformation("Ресурс перемещен из {source} в {dest}", sourceRelativePath, destinationRelativePath);
+
+            logger.LogInformation("Ресурс перемещен из {source} в {dest}. Затронуто файлов: {count}", 
+                sourceRelativePath, destinationRelativePath, filesToMove.Count);
             return MbResult.Success();
         });
+        return result.IsSuccess
+            ? MbResult<List<FileInfo>>.Success(filesToMove)
+            : MbResult<List<FileInfo>>.Failure(result.Error!);
     }
 }
